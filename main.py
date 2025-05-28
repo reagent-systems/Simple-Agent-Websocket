@@ -7,6 +7,7 @@ real-time web interface capabilities without duplicating the core codebase.
 """
 
 import argparse
+import os
 import sys
 
 from websocket_server.server import create_server
@@ -15,8 +16,9 @@ from websocket_server.server import create_server
 def main():
     """Main function to start the WebSocket server"""
     parser = argparse.ArgumentParser(description='Simple-Agent-Websocket Server')
-    parser.add_argument('--host', default='localhost', help='Host to bind to (default: localhost)')
-    parser.add_argument('--port', type=int, default=5000, help='Port to bind to (default: 5000)')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (default: 0.0.0.0)')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', 5000)), 
+                      help='Port to bind to (default: PORT env var or 5000)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--eager-loading', action='store_true',
                       help='Use eager loading (load all tools at startup) instead of dynamic loading')
