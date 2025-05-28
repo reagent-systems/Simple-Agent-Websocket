@@ -12,9 +12,6 @@ WORKDIR /app
 # Copy the entire project (including .git for submodules)
 COPY . .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Initialize git submodules and create symlink
 RUN git config --global --add safe.directory /app && \
     git submodule update --init --recursive && \
@@ -23,6 +20,12 @@ RUN git config --global --add safe.directory /app && \
     ls -la SimpleAgent/ && \
     echo "✅ SimpleAgent directory contents:" && \
     ls -la SimpleAgent/core/ || echo "⚠️ Core directory not found"
+
+# Install WebSocket server dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install SimpleAgent core dependencies
+RUN pip install --no-cache-dir -r SimpleAgent-Core/requirements.txt
 
 # Expose port
 EXPOSE 8080
