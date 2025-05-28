@@ -34,5 +34,6 @@ EXPOSE 8080
 ENV PORT=8080
 ENV PYTHONPATH=/app
 
+
 # Run the application
 CMD ["python", "main.py", "--host", "0.0.0.0", "--port", "8080"] 
