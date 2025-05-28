@@ -1,0 +1,4 @@
+# WebSocket Server Dependencies
+flask
+flask-socketio
+eventlet
