@@ -14,7 +14,16 @@ This project follows the **"Don't Repeat Yourself" (DRY)** principle by:
 
 ```
 Simple-Agent-Websocket/
-├── websocket_server.py          # Main WebSocket server (thin wrapper)
+├── main.py                      # Main entry point
+├── websocket_server.py          # Backward compatibility wrapper
+├── websocket_server/            # Modular server package
+│   ├── __init__.py             # Package initialization
+│   ├── core_loader.py          # SimpleAgent core loading
+│   ├── run_manager.py          # WebSocket-enhanced RunManager
+│   ├── agent_wrapper.py        # Agent session management
+│   ├── event_handlers.py       # WebSocket event handlers
+│   ├── routes.py               # HTTP API routes
+│   └── server.py               # Main server class
 ├── test_client_enhanced.html    # Enhanced test client with real-time UI
 ├── setup_submodule.sh          # Linux/Mac setup script
 ├── setup_submodule.bat         # Windows setup script
@@ -32,6 +41,7 @@ Simple-Agent-Websocket/
 - **📦 No Code Duplication**: Uses the official SimpleAgent Core as a git submodule
 - **🔄 Auto-sync**: Easy updates when the core repository changes
 - **🌐 Multi-session**: Support for multiple concurrent WebSocket sessions
+- **🧩 Modular Design**: Clean, maintainable code structure
 
 ## 🚀 Quick Start
 
@@ -74,6 +84,13 @@ DEBUG_MODE=False
 ### 3. Start the WebSocket Server
 
 ```bash
+# New modular interface (recommended)
+python main.py
+
+# Or with options
+python main.py --host 0.0.0.0 --port 8080 --debug
+
+# Backward compatibility (deprecated but still works)
 python websocket_server.py
 ```
 
@@ -137,18 +154,25 @@ git commit -m "Update SimpleAgent core to latest version"
 
 ### Project Structure
 
-- **`websocket_server.py`**: The main WebSocket server that wraps SimpleAgent Core
-- **`WebSocketRunManager`**: Extends the core `RunManager` to emit WebSocket events
-- **`WebSocketAgentWrapper`**: Manages agent sessions and threading
+The server is now organized into clean, modular components:
+
+- **`main.py`**: Entry point with argument parsing
+- **`websocket_server/core_loader.py`**: Handles loading SimpleAgent core from submodule
+- **`websocket_server/run_manager.py`**: WebSocket-enhanced RunManager
+- **`websocket_server/agent_wrapper.py`**: Session management and agent wrapping
+- **`websocket_server/event_handlers.py`**: WebSocket event handling
+- **`websocket_server/routes.py`**: HTTP API endpoints
+- **`websocket_server/server.py`**: Main server class and initialization
 - **`test_client_enhanced.html`**: Full-featured test client with real-time UI
 
 ### Adding Features
 
-Since this is a thin wrapper, you can:
-1. **Extend WebSocket events**: Add new event types in `WebSocketRunManager`
-2. **Enhance the UI**: Modify `test_client_enhanced.html`
-3. **Add API endpoints**: Extend the Flask app with new routes
+Since this is a modular wrapper, you can:
+1. **Extend WebSocket events**: Add new event types in `event_handlers.py`
+2. **Add HTTP endpoints**: Extend `routes.py` with new API routes
+3. **Enhance the UI**: Modify `test_client_enhanced.html`
 4. **Customize behavior**: Override methods in the wrapper classes
+5. **Add new modules**: Create new modules in the `websocket_server/` package
 
 ### Core Updates
 
@@ -162,7 +186,7 @@ When the SimpleAgent Core gets updated:
 ### Server Options
 
 ```bash
-python websocket_server.py --help
+python main.py --help
 ```
 
 - `--host`: Host to bind to (default: localhost)
@@ -178,7 +202,19 @@ All SimpleAgent Core environment variables are supported. See the [core document
 
 - `GET /health`: Health check and server status
 - `GET /sessions`: List active WebSocket sessions
+- `GET /version`: Version information for both WebSocket server and core
 - `WebSocket /socket.io/`: Main WebSocket endpoint
+
+## 🧩 Modular Benefits
+
+The new modular structure provides:
+
+- **🔧 Maintainability**: Each component has a single responsibility
+- **🧪 Testability**: Individual modules can be tested in isolation
+- **📈 Scalability**: Easy to add new features without affecting existing code
+- **🔍 Debuggability**: Clear separation makes issues easier to track down
+- **👥 Team Development**: Multiple developers can work on different modules
+- **📚 Documentation**: Each module is self-contained and well-documented
 
 ## 🔒 Security Considerations
 
@@ -212,8 +248,10 @@ This project follows the same license as the SimpleAgent Core.
 ✅ **Lightweight** - Only adds WebSocket functionality  
 ✅ **Maintainable** - Core changes don't require manual updates  
 ✅ **Focused** - This repo only handles WebSocket concerns  
+✅ **Modular** - Clean, organized code structure  
 
 ❌ **Alternative approaches we avoided:**
 - Forking the core (creates maintenance burden)
 - Copying core files (leads to version drift)
 - Modifying core directly (breaks separation of concerns)
+- Monolithic server files (hard to maintain and extend)

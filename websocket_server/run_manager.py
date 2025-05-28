@@ -1,108 +1,49 @@
 """
-Simple-Agent-Websocket Server
+WebSocket Run Manager
 
-A lightweight WebSocket wrapper around the SimpleAgent core that provides
-real-time web interface capabilities without duplicating the core codebase.
-
-This server acts as a thin layer that:
-1. Imports the SimpleAgent core from the git submodule
-2. Wraps the core functionality with WebSocket events
-3. Provides bidirectional communication for web UIs
+Enhanced RunManager that emits WebSocket events during execution.
+This extends the core RunManager without modifying it.
 """
 
-import os
-import sys
 import json
 import time
-import uuid
-import logging
-import threading
 import queue
-from typing import Dict, Any, Optional
-from flask import Flask, request
-from flask_socketio import SocketIO, emit, disconnect
+import logging
+from typing import Dict, Any
 from datetime import datetime
 
-# Add the SimpleAgent core to the Python path
-CORE_PATH = os.path.join(os.path.dirname(__file__), 'SimpleAgent')
-if os.path.exists(CORE_PATH):
-    sys.path.insert(0, CORE_PATH)
-else:
-    print("❌ SimpleAgent core not found!")
-    print("Please run the setup script first:")
-    print("  Linux/Mac: ./setup_submodule.sh")
-    print("  Windows: setup_submodule.bat")
-    sys.exit(1)
+from .core_loader import core_loader
 
-# Set up basic logging configuration
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-try:
-    # Import from SimpleAgent core
-    import commands
-    from commands import REGISTERED_COMMANDS, COMMAND_SCHEMAS
-    from core.agent import SimpleAgent
-    from core.config import OPENAI_API_KEY, MAX_STEPS, API_PROVIDER, API_BASE_URL, GEMINI_API_KEY, create_client
-    from core.version import AGENT_VERSION
-    from core.run_manager import RunManager
-    from core.conversation import ConversationManager
-    from core.execution import ExecutionManager
-    from core.memory import MemoryManager
-except ImportError as e:
-    print(f"❌ Failed to import SimpleAgent core: {e}")
-    print("Please ensure the SimpleAgent core is properly set up.")
-    print("Run the setup script:")
-    print("  Linux/Mac: ./setup_submodule.sh")
-    print("  Windows: setup_submodule.bat")
-    sys.exit(1)
-
-# Check for proper configuration based on API provider
-if API_PROVIDER == "lmstudio":
-    if not API_BASE_URL:
-        logging.error("Error: API_BASE_URL environment variable not set for LM-Studio provider.")
-        logging.info("Please set API_BASE_URL to your LM-Studio endpoint (e.g., http://192.168.0.2:1234/v1)")
-        logging.info("You can set it in a .env file or in your environment variables.")
-        sys.exit(1)
-    logging.info(f"Using LM-Studio provider at: {API_BASE_URL}")
-elif API_PROVIDER == "openai":
-    if not OPENAI_API_KEY:
-        logging.error("Error: OPENAI_API_KEY environment variable not set for OpenAI provider.")
-        logging.info("Please set it in a .env file or in your environment variables.")
-        sys.exit(1)
-    logging.info("Using OpenAI provider")
-elif API_PROVIDER == "gemini":
-    if not GEMINI_API_KEY:
-        logging.error("Error: GEMINI_API_KEY environment variable not set for Gemini provider.")
-        logging.info("Please set it in a .env file or in your environment variables.")
-        sys.exit(1)
-    logging.info("Using Gemini provider")
-else:
-    logging.error(f"Error: Unknown API_PROVIDER '{API_PROVIDER}'. Supported providers: 'openai', 'lmstudio', 'gemini'")
-    sys.exit(1)
-
-# Initialize Flask app and SocketIO
-app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'simple-agent-websocket-secret')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
-# Global storage for agent sessions
-agent_sessions: Dict[str, Dict[str, Any]] = {}
+logger = logging.getLogger(__name__)
 
 
-class WebSocketRunManager(RunManager):
+class WebSocketRunManager:
     """
     Enhanced RunManager that emits WebSocket events during execution.
     This extends the core RunManager without modifying it.
     """
     
     def __init__(self, model: str, output_dir: str, session_id: str, socketio_instance):
-        super().__init__(model, output_dir)
+        # Load core modules
+        core = core_loader.load_core_modules()
+        RunManager = core['RunManager']
+        
+        # Initialize the base run manager
+        self.run_manager = RunManager(model, output_dir)
+        
+        # WebSocket specific attributes
         self.session_id = session_id
         self.socketio = socketio_instance
         self.user_input_queue = queue.Queue()
         self.waiting_for_input = False
         self.stop_requested = False
+        
+        # Expose core manager attributes for compatibility
+        self.conversation_manager = self.run_manager.conversation_manager
+        self.execution_manager = self.run_manager.execution_manager
+        self.memory_manager = self.run_manager.memory_manager
+        self.summarizer = self.run_manager.summarizer
+        self.output_dir = self.run_manager.output_dir
         
     def emit_message(self, event: str, data: Dict[str, Any]):
         """Emit a message to the WebSocket client"""
@@ -188,6 +129,7 @@ class WebSocketRunManager(RunManager):
         current_year = time.strftime("%Y")
         
         # Save and change to the output directory
+        import os
         original_cwd = os.getcwd()
         
         try:
@@ -517,302 +459,4 @@ Current execution context:
         finally:
             # Always restore the original working directory
             if os.getcwd() != original_cwd:
-                os.chdir(original_cwd)
-
-
-class WebSocketAgentWrapper:
-    """
-    Wrapper class that adapts SimpleAgent for WebSocket communication.
-    """
-    
-    def __init__(self, session_id: str, output_dir: str, model: str = None):
-        self.session_id = session_id
-        self.output_dir = output_dir
-        self.model = model
-        self.is_running = False
-        self.stop_requested = False
-        self.run_manager = None
-        
-    def run_async(self, instruction: str, max_steps: int = 10, auto_continue: int = 0):
-        """Run the agent asynchronously and emit progress updates"""
-        self.is_running = True
-        self.stop_requested = False
-        
-        try:
-            # Create WebSocket-enabled run manager
-            self.run_manager = WebSocketRunManager(
-                model=self.model,
-                output_dir=self.output_dir,
-                session_id=self.session_id,
-                socketio_instance=socketio
-            )
-            
-            # Run the agent
-            self.run_manager.run(instruction, max_steps, auto_continue)
-            
-        except Exception as e:
-            logging.error(f"Error in agent execution: {e}")
-            socketio.emit('agent_error', {
-                'error': str(e),
-                'timestamp': datetime.now().isoformat()
-            }, room=self.session_id)
-        finally:
-            self.is_running = False
-    
-    def stop(self):
-        """Request the agent to stop"""
-        self.stop_requested = True
-        if self.run_manager:
-            self.run_manager.stop_requested = True
-            if hasattr(self.run_manager, 'execution_manager'):
-                self.run_manager.execution_manager.stop_requested = True
-        return True
-        
-    def provide_user_input(self, user_input: str):
-        """Provide user input to the running agent"""
-        if self.run_manager and self.is_running:
-            self.run_manager.provide_user_input(user_input)
-
-
-@socketio.on('connect')
-def handle_connect():
-    """Handle client connection"""
-    session_id = request.sid
-    logging.info(f"Client connected: {session_id}")
-    
-    # Create a unique output directory for this session
-    base_output_dir = os.path.abspath('output')
-    if not os.path.exists(base_output_dir):
-        os.makedirs(base_output_dir)
-    
-    run_id = str(uuid.uuid4())[:8]
-    version_folder = 'v' + '_'.join(AGENT_VERSION.lstrip('v').split('.'))
-    session_output_dir = os.path.join(base_output_dir, f"{version_folder}_{session_id}_{run_id}")
-    os.makedirs(session_output_dir, exist_ok=True)
-    
-    # Initialize agent wrapper for this session
-    from core.config import DEFAULT_MODEL
-    wrapper = WebSocketAgentWrapper(session_id, session_output_dir, DEFAULT_MODEL)
-    
-    # Store session data
-    agent_sessions[session_id] = {
-        'wrapper': wrapper,
-        'output_dir': session_output_dir,
-        'connected_at': datetime.now().isoformat()
-    }
-    
-    # Send connection confirmation
-    emit('connected', {
-        'session_id': session_id,
-        'agent_version': AGENT_VERSION,
-        'api_provider': API_PROVIDER,
-        'output_dir': session_output_dir,
-        'timestamp': datetime.now().isoformat()
-    })
-
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Handle client disconnection"""
-    session_id = request.sid
-    logging.info(f"Client disconnected: {session_id}")
-    
-    # Clean up session data
-    if session_id in agent_sessions:
-        session_data = agent_sessions[session_id]
-        wrapper = session_data['wrapper']
-        
-        # Stop any running agent
-        if wrapper.is_running:
-            wrapper.stop()
-        
-        # Remove session
-        del agent_sessions[session_id]
-
-
-@socketio.on('run_agent')
-def handle_run_agent(data):
-    """Handle agent run request"""
-    session_id = request.sid
-    
-    if session_id not in agent_sessions:
-        emit('error', {'message': 'Session not found'})
-        return
-    
-    session_data = agent_sessions[session_id]
-    wrapper = session_data['wrapper']
-    
-    # Check if agent is already running
-    if wrapper.is_running:
-        emit('error', {'message': 'Agent is already running'})
-        return
-    
-    # Extract parameters
-    instruction = data.get('instruction', '')
-    max_steps = data.get('max_steps', 10)
-    auto_continue = data.get('auto_continue', 0)
-    
-    if not instruction:
-        emit('error', {'message': 'Instruction is required'})
-        return
-    
-    # Run agent in a separate thread
-    def run_agent_thread():
-        wrapper.run_async(instruction, max_steps, auto_continue)
-    
-    thread = threading.Thread(target=run_agent_thread)
-    thread.daemon = True
-    thread.start()
-
-
-@socketio.on('stop_agent')
-def handle_stop_agent():
-    """Handle agent stop request"""
-    session_id = request.sid
-    
-    if session_id not in agent_sessions:
-        emit('error', {'message': 'Session not found'})
-        return
-    
-    session_data = agent_sessions[session_id]
-    wrapper = session_data['wrapper']
-    
-    if not wrapper.is_running:
-        emit('error', {'message': 'Agent is not running'})
-        return
-    
-    # Stop the agent
-    success = wrapper.stop()
-    emit('agent_stop_requested', {
-        'success': success,
-        'timestamp': datetime.now().isoformat()
-    })
-
-
-@socketio.on('user_input')
-def handle_user_input(data):
-    """Handle user input for running agent"""
-    session_id = request.sid
-    
-    if session_id not in agent_sessions:
-        emit('error', {'message': 'Session not found'})
-        return
-    
-    session_data = agent_sessions[session_id]
-    wrapper = session_data['wrapper']
-    
-    if not wrapper.is_running:
-        emit('error', {'message': 'Agent is not running'})
-        return
-    
-    user_input = data.get('input', '')
-    if not user_input:
-        emit('error', {'message': 'Input is required'})
-        return
-    
-    # Provide input to the agent
-    wrapper.provide_user_input(user_input)
-    emit('user_input_sent', {
-        'input': user_input,
-        'timestamp': datetime.now().isoformat()
-    })
-
-
-@socketio.on('get_status')
-def handle_get_status():
-    """Handle status request"""
-    session_id = request.sid
-    
-    if session_id not in agent_sessions:
-        emit('error', {'message': 'Session not found'})
-        return
-    
-    session_data = agent_sessions[session_id]
-    wrapper = session_data['wrapper']
-    
-    emit('status', {
-        'session_id': session_id,
-        'is_running': wrapper.is_running,
-        'connected_at': session_data['connected_at'],
-        'agent_version': AGENT_VERSION,
-        'api_provider': API_PROVIDER,
-        'output_dir': session_data['output_dir'],
-        'timestamp': datetime.now().isoformat()
-    })
-
-
-@app.route('/health')
-def health_check():
-    """Health check endpoint"""
-    return {
-        'status': 'healthy',
-        'agent_version': AGENT_VERSION,
-        'api_provider': API_PROVIDER,
-        'active_sessions': len(agent_sessions),
-        'timestamp': datetime.now().isoformat()
-    }
-
-
-@app.route('/sessions')
-def list_sessions():
-    """List active sessions"""
-    sessions = []
-    for session_id, session_data in agent_sessions.items():
-        sessions.append({
-            'session_id': session_id,
-            'connected_at': session_data['connected_at'],
-            'is_running': session_data['wrapper'].is_running,
-            'output_dir': session_data['output_dir']
-        })
-    
-    return {
-        'sessions': sessions,
-        'count': len(sessions),
-        'timestamp': datetime.now().isoformat()
-    }
-
-
-def main():
-    """Main function to start the WebSocket server"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Simple-Agent-Websocket Server')
-    parser.add_argument('--host', default='localhost', help='Host to bind to (default: localhost)')
-    parser.add_argument('--port', type=int, default=5000, help='Port to bind to (default: 5000)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
-    parser.add_argument('--eager-loading', action='store_true',
-                      help='Use eager loading (load all tools at startup) instead of dynamic loading')
-    
-    args = parser.parse_args()
-    
-    # Initialize commands based on user preference
-    dynamic_loading = not args.eager_loading
-    print(f"🔧 Initializing tools with {'dynamic' if dynamic_loading else 'eager'} loading...")
-    commands.init(dynamic=dynamic_loading)
-    
-    try:
-        print(f"🚀 Starting Simple-Agent-Websocket Server...")
-        print(f"📡 Server will be available at: http://{args.host}:{args.port}")
-        print(f"🔌 WebSocket endpoint: ws://{args.host}:{args.port}/socket.io/")
-        print(f"🏥 Health check: http://{args.host}:{args.port}/health")
-        print(f"📊 Sessions endpoint: http://{args.host}:{args.port}/sessions")
-        print(f"🤖 Agent version: {AGENT_VERSION}")
-        print(f"🔗 API provider: {API_PROVIDER}")
-        print(f"💬 Features: Real-time step updates, bidirectional communication")
-        print(f"📦 Core: SimpleAgent from git submodule")
-        
-        # Start the server
-        socketio.run(
-            app,
-            host=args.host,
-            port=args.port,
-            debug=args.debug,
-            use_reloader=False  # Disable reloader to prevent issues with threading
-        )
-    finally:
-        # Clean up tool manager resources
-        commands.cleanup()
-
-
-if __name__ == "__main__":
-    main() 
+                os.chdir(original_cwd) 
