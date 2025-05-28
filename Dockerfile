@@ -9,19 +9,20 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy the entire project (including .git for submodules)
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire project
-COPY . .
-
 # Initialize git submodules and create symlink
-RUN git submodule update --init --recursive && \
+RUN git config --global --add safe.directory /app && \
+    git submodule update --init --recursive && \
     ln -sf SimpleAgent-Core/SimpleAgent SimpleAgent && \
-    ls -la SimpleAgent/
+    echo "✅ Submodules initialized successfully" && \
+    ls -la SimpleAgent/ && \
+    echo "✅ SimpleAgent directory contents:" && \
+    ls -la SimpleAgent/core/ || echo "⚠️ Core directory not found"
 
 # Expose port
 EXPOSE 8080
