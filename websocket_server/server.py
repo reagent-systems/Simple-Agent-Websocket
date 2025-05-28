@@ -92,7 +92,8 @@ class SimpleAgentWebSocketServer:
                 host=self.host,
                 port=self.port,
                 debug=self.debug,
-                use_reloader=False  # Disable reloader to prevent issues with threading
+                use_reloader=False,  # Disable reloader to prevent issues with threading
+                allow_unsafe_werkzeug=True  # Allow running in production environments
             )
         finally:
             # Clean up tool manager resources
