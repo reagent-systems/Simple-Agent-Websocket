@@ -530,11 +530,21 @@ Current execution context:
         return new_files
     
     def emit_file_created(self, file_info: dict):
-        """Emit file creation event"""
+        """Emit file creation event with only the required fields"""
+        # Build the minimal file object
+        file_payload = {
+            'name': file_info.get('name'),
+            'size': file_info.get('size'),
+            'created': file_info.get('created'),
+            'modified': file_info.get('modified')
+        }
+        # Always include at least name and size
+        if not file_payload['name'] or file_payload['size'] is None:
+            # Do not emit if required fields are missing
+            return
         self.emit_message('file_created', {
-            'file': file_info,
-            'session_id': self.session_id,
-            'timestamp': datetime.now().isoformat()
+            'file': file_payload,
+            'session_id': self.session_id
         })
     
     def get_created_files(self):
