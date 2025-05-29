@@ -12,6 +12,32 @@ import sys
 
 from websocket_server.server import create_server
 
+# Global app instance for Gunicorn
+app = None
+socketio = None
+
+
+def create_app():
+    """Create and configure the Flask app for production deployment"""
+    global app, socketio
+    
+    if app is None:
+        # Create server instance
+        server = create_server(
+            host='0.0.0.0', 
+            port=int(os.environ.get('PORT', 5000)), 
+            debug=False
+        )
+        
+        # Initialize the server
+        if not server.initialize(eager_loading=False):
+            raise RuntimeError("Failed to initialize server")
+        
+        app = server.app
+        socketio = server.socketio
+    
+    return app
+
 
 def main():
     """Main function to start the WebSocket server"""
@@ -35,6 +61,9 @@ def main():
     # Run the server
     server.run()
 
+
+# Create app instance for Gunicorn
+app = create_app()
 
 if __name__ == "__main__":
     main() 

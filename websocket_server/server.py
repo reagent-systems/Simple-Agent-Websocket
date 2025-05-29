@@ -53,7 +53,16 @@ class SimpleAgentWebSocketServer:
         self.app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'simple-agent-websocket-secret')
         
         # Initialize SocketIO
-        self.socketio = SocketIO(self.app, cors_allowed_origins="*", async_mode='threading')
+        self.socketio = SocketIO(
+            self.app, 
+            cors_allowed_origins="*", 
+            async_mode='threading',
+            logger=False,  # Disable verbose logging to reduce noise
+            engineio_logger=False,  # Disable engine.io logging
+            ping_timeout=60,  # Increase ping timeout
+            ping_interval=25,  # Ping interval
+            max_http_buffer_size=1000000  # Increase buffer size
+        )
         
         # Register routes
         self.app.register_blueprint(api_bp)

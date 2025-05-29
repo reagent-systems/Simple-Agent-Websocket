@@ -53,8 +53,13 @@ class WebSocketRunManager:
         self._scan_initial_files()
         
     def emit_message(self, event: str, data: Dict[str, Any]):
-        """Emit a message to the WebSocket client"""
-        self.socketio.emit(event, data, room=self.session_id)
+        """Emit a message to the WebSocket client with error handling"""
+        try:
+            if self.socketio and self.session_id:
+                self.socketio.emit(event, data, room=self.session_id)
+        except Exception as e:
+            logger.warning(f"Failed to emit WebSocket event '{event}' to session {self.session_id}: {e}")
+            # Don't re-raise the exception to avoid breaking the agent execution
         
     def emit_step_start(self, step: int, max_steps: int):
         """Emit step start event"""
@@ -461,10 +466,17 @@ Current execution context:
             self.memory_manager.add_conversation(self.conversation_manager.get_history())
             self.memory_manager.save_memory()
             
-            self.emit_message('agent_finished', {
-                'message': 'Agent execution completed',
-                'timestamp': datetime.now().isoformat()
-            })
+            # Emit agent_stopped if stopped by user or external request
+            if self.stop_requested or self.execution_manager.stop_requested:
+                self.emit_message('agent_stopped', {
+                    'message': 'Agent was stopped by user or external request',
+                    'timestamp': datetime.now().isoformat()
+                })
+            else:
+                self.emit_message('agent_finished', {
+                    'message': 'Agent execution completed',
+                    'timestamp': datetime.now().isoformat()
+                })
             
         finally:
             # Always restore the original working directory
