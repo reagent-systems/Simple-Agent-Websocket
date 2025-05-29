@@ -166,6 +166,54 @@ def register_handlers(socketio):
             'timestamp': datetime.now().isoformat()
         })
 
+    @socketio.on('get_files')
+    def handle_get_files():
+        """Handle request to get list of created files"""
+        session_id = request.sid
+        
+        session_data = session_manager.get_session(session_id)
+        if not session_data:
+            emit('error', {'message': 'Session not found'})
+            return
+        
+        wrapper = session_data['wrapper']
+        
+        # Get created files if run manager exists
+        files = []
+        if hasattr(wrapper, 'run_manager') and wrapper.run_manager:
+            files = wrapper.run_manager.get_created_files()
+        
+        emit('files_list', {
+            'session_id': session_id,
+            'files': files,
+            'count': len(files),
+            'timestamp': datetime.now().isoformat()
+        })
+
+    @socketio.on('refresh_files')
+    def handle_refresh_files():
+        """Handle request to refresh/scan for new files"""
+        session_id = request.sid
+        
+        session_data = session_manager.get_session(session_id)
+        if not session_data:
+            emit('error', {'message': 'Session not found'})
+            return
+        
+        wrapper = session_data['wrapper']
+        
+        # Scan for new files if run manager exists
+        new_files = []
+        if hasattr(wrapper, 'run_manager') and wrapper.run_manager:
+            new_files = wrapper.run_manager._scan_for_new_files()
+        
+        emit('files_refreshed', {
+            'session_id': session_id,
+            'new_files': new_files,
+            'count': len(new_files),
+            'timestamp': datetime.now().isoformat()
+        })
+
 
 def get_session_manager():
     """Get the global session manager"""

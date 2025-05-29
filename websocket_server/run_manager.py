@@ -1,8 +1,8 @@
 """
 WebSocket Run Manager
 
-Enhanced RunManager that emits WebSocket events during execution.
-This extends the core RunManager without modifying it.
+Extends the core RunManager to provide WebSocket-based real-time communication
+and event emission capabilities.
 """
 
 import json
@@ -38,12 +38,19 @@ class WebSocketRunManager:
         self.waiting_for_input = False
         self.stop_requested = False
         
+        # File tracking
+        self.created_files = []
+        self.initial_files = set()
+        
         # Expose core manager attributes for compatibility
         self.conversation_manager = self.run_manager.conversation_manager
         self.execution_manager = self.run_manager.execution_manager
         self.memory_manager = self.run_manager.memory_manager
         self.summarizer = self.run_manager.summarizer
         self.output_dir = self.run_manager.output_dir
+        
+        # Initialize file tracking
+        self._scan_initial_files()
         
     def emit_message(self, event: str, data: Dict[str, Any]):
         """Emit a message to the WebSocket client"""
@@ -290,6 +297,9 @@ Current execution context:
                                 # Emit tool call execution
                                 self.emit_tool_call(function_name, function_args, str(function_response))
                                 
+                                # Scan for new files after tool execution
+                                self._scan_for_new_files()
+                                
                                 # Track changes if any were made
                                 if change:
                                     changes_made.append(change)
@@ -460,3 +470,61 @@ Current execution context:
             # Always restore the original working directory
             if os.getcwd() != original_cwd:
                 os.chdir(original_cwd) 
+
+    def _scan_initial_files(self):
+        """Scan the output directory for initial files"""
+        import os
+        try:
+            if os.path.exists(self.output_dir):
+                for root, dirs, files in os.walk(self.output_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        self.initial_files.add(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to scan initial files: {e}")
+    
+    def _scan_for_new_files(self):
+        """Scan for new files created since initialization"""
+        import os
+        new_files = []
+        try:
+            if os.path.exists(self.output_dir):
+                for root, dirs, files in os.walk(self.output_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if file_path not in self.initial_files and file_path not in [f['path'] for f in self.created_files]:
+                            # Get file info
+                            stat = os.stat(file_path)
+                            relative_path = os.path.relpath(file_path, self.output_dir)
+                            
+                            file_info = {
+                                'path': file_path,
+                                'relative_path': relative_path,
+                                'name': file,
+                                'size': stat.st_size,
+                                'created': datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                            }
+                            
+                            new_files.append(file_info)
+                            self.created_files.append(file_info)
+                            
+                            # Emit file creation event
+                            self.emit_file_created(file_info)
+                            
+        except Exception as e:
+            logger.warning(f"Failed to scan for new files: {e}")
+            
+        return new_files
+    
+    def emit_file_created(self, file_info: dict):
+        """Emit file creation event"""
+        self.emit_message('file_created', {
+            'file': file_info,
+            'session_id': self.session_id,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    def get_created_files(self):
+        """Get list of all created files"""
+        return self.created_files.copy() 

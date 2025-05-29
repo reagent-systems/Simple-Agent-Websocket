@@ -1,10 +1,10 @@
 """
-Simple-Agent-Websocket Server Package
+Simple-Agent-Websocket Server
 
-A lightweight WebSocket wrapper around the SimpleAgent core that provides
-real-time web interface capabilities without duplicating the core codebase.
+A WebSocket-based server for SimpleAgent that enables real-time communication
+with web UIs and provides file download capabilities.
 """
 
 __version__ = "1.0.0"
-__author__ = "Simple-Agent-Websocket Team"
-__description__ = "WebSocket wrapper for SimpleAgent Core" 
+__author__ = "SimpleAgent WebSocket Team"
+__description__ = "WebSocket server for SimpleAgent with real-time communication and file management" 

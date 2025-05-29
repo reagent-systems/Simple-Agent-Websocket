@@ -4,7 +4,8 @@ Flask Routes
 HTTP endpoints for the SimpleAgent WebSocket server.
 """
 
-from flask import Blueprint
+import os
+from flask import Blueprint, send_file, abort, jsonify
 from datetime import datetime
 
 from .core_loader import core_loader
@@ -46,6 +47,72 @@ def list_sessions():
     }
 
 
+@api_bp.route('/sessions/<session_id>/files')
+def list_session_files(session_id):
+    """List files created by a specific session"""
+    session_manager = get_session_manager()
+    session_data = session_manager.get_session(session_id)
+    
+    if not session_data:
+        abort(404, description="Session not found")
+    
+    wrapper = session_data['wrapper']
+    if hasattr(wrapper, 'run_manager') and wrapper.run_manager:
+        files = wrapper.run_manager.get_created_files()
+        return {
+            'session_id': session_id,
+            'files': files,
+            'count': len(files),
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    return {
+        'session_id': session_id,
+        'files': [],
+        'count': 0,
+        'timestamp': datetime.now().isoformat()
+    }
+
+
+@api_bp.route('/sessions/<session_id>/files/<path:filename>')
+def download_session_file(session_id, filename):
+    """Download a file created by a specific session"""
+    session_manager = get_session_manager()
+    session_data = session_manager.get_session(session_id)
+    
+    if not session_data:
+        abort(404, description="Session not found")
+    
+    # Get the session's output directory
+    output_dir = session_data['output_dir']
+    file_path = os.path.join(output_dir, filename)
+    
+    # Security check: ensure the file is within the session's output directory
+    if not os.path.abspath(file_path).startswith(os.path.abspath(output_dir)):
+        abort(403, description="Access denied")
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        abort(404, description="File not found")
+    
+    # Check if this file was created by the agent (optional security check)
+    wrapper = session_data['wrapper']
+    if hasattr(wrapper, 'run_manager') and wrapper.run_manager:
+        created_files = wrapper.run_manager.get_created_files()
+        file_allowed = any(f['relative_path'] == filename for f in created_files)
+        if not file_allowed:
+            abort(403, description="File not created by agent")
+    
+    try:
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=os.path.basename(filename)
+        )
+    except Exception as e:
+        abort(500, description=f"Error downloading file: {str(e)}")
+
+
 @api_bp.route('/version')
 def get_version():
     """Get version information"""
@@ -54,7 +121,11 @@ def get_version():
     AGENT_VERSION = core['AGENT_VERSION']
     API_PROVIDER = core['API_PROVIDER']
     
-    from .. import __version__ as websocket_version
+    # Import websocket server version
+    try:
+        from . import __version__ as websocket_version
+    except ImportError:
+        websocket_version = "1.0.0"
     
     return {
         'websocket_server_version': websocket_version,
