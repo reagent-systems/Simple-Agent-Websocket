@@ -25,25 +25,30 @@ def register_handlers(socketio):
     @socketio.on('connect')
     def handle_connect():
         """Handle client connection"""
-        session_id = request.sid
-        logger.info(f"Client connected: {session_id}")
-        
-        # Load core modules for version info
-        core = core_loader.load_core_modules()
-        AGENT_VERSION = core['AGENT_VERSION']
-        API_PROVIDER = core['API_PROVIDER']
-        
-        # Create session
-        session_data = session_manager.create_session(session_id)
-        
-        # Send connection confirmation
-        emit('connected', {
-            'session_id': session_id,
-            'agent_version': AGENT_VERSION,
-            'api_provider': API_PROVIDER,
-            'output_dir': session_data['output_dir'],
-            'timestamp': datetime.now().isoformat()
-        })
+        try:
+            session_id = request.sid
+            logger.info(f"Client connected: {session_id}")
+            
+            # Load core modules for version info
+            core = core_loader.load_core_modules()
+            AGENT_VERSION = core['AGENT_VERSION']
+            API_PROVIDER = core['API_PROVIDER']
+            
+            # Create session
+            session_data = session_manager.create_session(session_id)
+            
+            # Send connection confirmation
+            emit('connected', {
+                'session_id': session_id,
+                'agent_version': AGENT_VERSION,
+                'api_provider': API_PROVIDER,
+                'output_dir': session_data['output_dir'],
+                'timestamp': datetime.now().isoformat()
+            })
+        except Exception as e:
+            logger.exception("Exception in handle_connect")
+            emit('error', {'message': str(e)})
+            disconnect()
 
     @socketio.on('disconnect')
     def handle_disconnect():
