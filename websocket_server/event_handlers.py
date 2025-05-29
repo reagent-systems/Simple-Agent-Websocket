@@ -172,7 +172,7 @@ def register_handlers(socketio):
         })
 
     @socketio.on('get_files')
-    def handle_get_files():
+    def handle_get_files(data=None):
         """Handle request to get list of created files"""
         session_id = request.sid
         
