@@ -52,28 +52,8 @@ class SimpleAgentWebSocketServer:
         self.app = Flask(__name__)
         self.app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'simple-agent-websocket-secret')
         
-        # Add error handlers
-        @self.app.errorhandler(500)
-        def handle_500(error):
-            logger.error(f"Internal server error: {error}")
-            return {'error': 'Internal server error'}, 500
-            
-        @self.app.errorhandler(Exception)
-        def handle_exception(error):
-            logger.exception(f"Unhandled exception: {error}")
-            return {'error': 'An unexpected error occurred'}, 500
-        
         # Initialize SocketIO
-        self.socketio = SocketIO(
-            self.app, 
-            cors_allowed_origins="*", 
-            async_mode='eventlet',  # Use eventlet for better stability
-            logger=False,  # Disable SocketIO's own logging to prevent conflicts
-            engineio_logger=False,  # Disable engine.io logging
-            ping_timeout=60,  # Increase ping timeout
-            ping_interval=25,  # Set ping interval
-            transports=['websocket', 'polling']  # Allow both transports
-        )
+        self.socketio = SocketIO(self.app, cors_allowed_origins="*", async_mode='threading')
         
         # Register routes
         self.app.register_blueprint(api_bp)
@@ -113,7 +93,7 @@ class SimpleAgentWebSocketServer:
                 port=self.port,
                 debug=self.debug,
                 use_reloader=False,  # Disable reloader to prevent issues with threading
-                log_output=not self.debug  # Reduce log output in production
+                allow_unsafe_werkzeug=True  # Allow running in production environments
             )
         finally:
             # Clean up tool manager resources

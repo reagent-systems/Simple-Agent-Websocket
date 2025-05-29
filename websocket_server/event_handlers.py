@@ -25,10 +25,9 @@ def register_handlers(socketio):
     @socketio.on('connect')
     def handle_connect():
         """Handle client connection"""
-        session_id = None
         try:
             session_id = request.sid
-            logger.info(f"Client connecting: {session_id}")
+            logger.info(f"Client connected: {session_id}")
             
             # Load core modules for version info
             core = core_loader.load_core_modules()
@@ -37,8 +36,6 @@ def register_handlers(socketio):
             
             # Create session
             session_data = session_manager.create_session(session_id)
-            
-            logger.info(f"Client connected successfully: {session_id}")
             
             # Send connection confirmation
             emit('connected', {
@@ -49,15 +46,9 @@ def register_handlers(socketio):
                 'timestamp': datetime.now().isoformat()
             })
         except Exception as e:
-            logger.exception(f"Exception in handle_connect for session {session_id}: {str(e)}")
-            try:
-                emit('error', {'message': f'Connection failed: {str(e)}'})
-            except:
-                logger.error("Failed to emit error message")
-            try:
-                disconnect()
-            except:
-                logger.error("Failed to disconnect client")
+            logger.exception("Exception in handle_connect")
+            emit('error', {'message': str(e)})
+            disconnect()
 
     @socketio.on('disconnect')
     def handle_disconnect():
