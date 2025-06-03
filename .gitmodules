@@ -1,3 +1,4 @@
 [submodule "SimpleAgent-Core"]
 	path = SimpleAgent-Core
 	url = https://github.com/reagent-systems/Simple-Agent-Core.git
+	branch = main
