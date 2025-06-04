@@ -52,6 +52,45 @@ class WebSocketRunManager:
         # Initialize file tracking
         self._scan_initial_files()
         
+        # Hook into the execution manager to intercept function calls
+        self._setup_execution_hooks()
+        
+    def _setup_execution_hooks(self):
+        """Set up hooks to intercept core manager operations for WebSocket events"""
+        # Store original methods
+        self._original_execute_function = self.execution_manager.execute_function
+        self._original_get_next_action = self.execution_manager.get_next_action
+        
+        # Replace with hooked versions
+        self.execution_manager.execute_function = self._hooked_execute_function
+        self.execution_manager.get_next_action = self._hooked_get_next_action
+        
+    def _hooked_execute_function(self, function_name: str, function_args: dict):
+        """Hooked version of execute_function that emits WebSocket events"""
+        # Call the original function
+        result, change = self._original_execute_function(function_name, function_args)
+        
+        # Emit tool call event
+        self.emit_tool_call(function_name, function_args, str(result))
+        
+        # Scan for new files after tool execution
+        self._scan_for_new_files()
+        
+        return result, change
+        
+    def _hooked_get_next_action(self, conversation_history):
+        """Hooked version of get_next_action that emits assistant messages"""
+        # Call the original function
+        assistant_message = self._original_get_next_action(conversation_history)
+        
+        # Emit assistant message if there's content
+        if assistant_message and hasattr(assistant_message, 'content') and assistant_message.content:
+            self.emit_assistant_message(assistant_message.content)
+        elif assistant_message and isinstance(assistant_message, dict) and 'content' in assistant_message:
+            self.emit_assistant_message(assistant_message['content'])
+            
+        return assistant_message
+        
     def emit_message(self, event: str, data: Dict[str, Any]):
         """Emit a message to the WebSocket client with error handling"""
         try:
@@ -121,10 +160,9 @@ class WebSocketRunManager:
     def run(self, user_instruction: str, max_steps: int = 10, auto_continue: int = 0):
         """
         Enhanced run method with WebSocket integration.
-        This overrides the parent run method to add WebSocket events.
+        This wraps the core RunManager's run method with WebSocket events.
         """
         # Reset stop flag
-        self.execution_manager.stop_requested = False
         self.stop_requested = False
         
         # Emit start event
@@ -136,352 +174,97 @@ class WebSocketRunManager:
             'timestamp': datetime.now().isoformat()
         })
         
-        # Get current date and time information for the system message
-        current_datetime = time.strftime("%Y-%m-%d %H:%M:%S")
-        current_year = time.strftime("%Y")
-        
-        # Save and change to the output directory
-        import os
-        original_cwd = os.getcwd()
-        
         try:
-            # Change to the output directory so all operations happen there
-            if os.path.exists(self.output_dir):
-                os.chdir(self.output_dir)
-                self.emit_message('directory_changed', {
-                    'directory': os.getcwd(),
-                    'timestamp': datetime.now().isoformat()
-                })
+            # Hook into the core run manager's print statements to emit WebSocket events
+            # We'll need to patch the input function to use our WebSocket input
+            import builtins
+            original_input = builtins.input
+            original_print = builtins.print
             
-            # Clear the conversation history and start fresh
-            self.conversation_manager.clear()
-            
-            # Create system message
-            system_message_content = f"""You are an AI agent that can manage its own execution steps.
-You are currently running with the following capabilities:
-- You can stop execution early if the task is complete
-- You can continue automatically if more steps are needed
-- You should be mindful of the current step number and total steps available
-
-Current date and time: {current_datetime}
-Your knowledge cutoff might be earlier, but you should consider the current date when processing tasks.
-Always work with the understanding that it is now {current_year} when handling time-sensitive information.
-
-When responding:
-1. Always consider if the task truly needs more steps
-2. If a task is complete, include phrases like "task complete", "all done", "finished", or "completed successfully"
-3. If you need more steps than allocated, make this clear in your response
-
-Current execution context:
-- Auto-continue is {"enabled" if auto_continue > 0 else "disabled"}
-"""
-            
-            self.conversation_manager.add_message("system", system_message_content)
-            
-            # Add the user instruction to the conversation
-            self.conversation_manager.add_message("user", user_instruction)
-            
-            # Track changes for summarization
-            changes_made = []
-            step_changes = []
-            
-            # Run the agent loop
-            step = 0
-            auto_steps_remaining = 0 if auto_continue is None else auto_continue
-            
-            while step < max_steps and not self.stop_requested and not self.execution_manager.stop_requested:
-                try:
-                    step += 1
-                    self.emit_step_start(step, max_steps)
+            def websocket_input(prompt=""):
+                """Replace input() calls with WebSocket input"""
+                return self.get_user_input(prompt)
+                
+            def websocket_print(*args, **kwargs):
+                """Capture print statements and optionally emit them"""
+                # Call original print
+                original_print(*args, **kwargs)
+                
+                # Parse print content for specific events
+                if args:
+                    text = ' '.join(str(arg) for arg in args)
                     
-                    # Get current date and time for the system message
-                    current_datetime = time.strftime("%Y-%m-%d %H:%M:%S")
-                    current_year = time.strftime("%Y")
-                    
-                    # Update system message with current step info
-                    if auto_steps_remaining == -1:
-                        auto_status = "enabled (infinite)"
-                        auto_mode_guidance = """IMPORTANT: You are running in AUTO-CONTINUE mode with infinite steps. 
-Do NOT ask the user questions or for input during task execution. 
-Instead, make decisions independently and proceed with executing the task to completion.
-Your goal is to complete the requested task fully without human intervention."""
-                    elif auto_steps_remaining > 0:
-                        auto_status = f"enabled ({auto_steps_remaining} steps remaining)"
-                        auto_mode_guidance = """IMPORTANT: You are running in AUTO-CONTINUE mode.
-Do NOT ask the user questions or for input during task execution.
-Instead, make decisions independently and proceed with executing the task.
-Your goal is to complete as much of the task as possible without human intervention."""
-                    else:
-                        auto_status = "disabled"
-                        auto_mode_guidance = """You are running in MANUAL mode.
-If you need user input, make it clear by using phrases like "do you need", "would you like", etc.
-The user will be prompted after each step to continue or provide new instructions."""
-                    
-                    # Update the system message
-                    updated_system_content = f"""You are an AI agent that can manage its own execution steps.
-You are currently running with the following capabilities:
-- You can stop execution early if the task is complete
-- You can continue automatically if more steps are needed
-- You should be mindful of the current step number and total steps available
-
-Current date and time: {current_datetime}
-Your knowledge cutoff might be earlier, but you should consider the current date when processing tasks.
-Always work with the understanding that it is now {current_year} when handling time-sensitive information.
-
-When responding:
-1. Always consider if the task truly needs more steps
-2. If a task is complete, include phrases like "task complete", "all done", "finished", or "completed successfully"
-3. If you need more steps than allocated, make this clear in your response
-
-{auto_mode_guidance}
-
-Current execution context:
-- You are on step {step} of {max_steps} total steps
-- Auto-continue is {auto_status}
-"""
-                    self.conversation_manager.update_system_message(updated_system_content)
-                    
-                    try:
-                        # Get the next action from the model
-                        assistant_message = self.execution_manager.get_next_action(
-                            self.conversation_manager.get_history()
-                        )
-                        
-                        if not assistant_message:
-                            self.emit_message('error', {
-                                'message': 'Failed to get a response from the model',
-                                'timestamp': datetime.now().isoformat()
-                            })
-                            break
+                    # Detect step transitions
+                    if "--- Step" in text:
+                        try:
+                            # Extract step info: "--- Step 1/10 ---"
+                            parts = text.split()
+                            step_part = [p for p in parts if '/' in p][0]
+                            step, max_steps = map(int, step_part.split('/'))
+                            self.emit_step_start(step, max_steps)
+                        except:
+                            pass  # Ignore parsing errors
                             
-                        # Extract and emit assistant content
-                        content = None
-                        if hasattr(assistant_message, 'content'):
-                            content = assistant_message.content
-                        elif isinstance(assistant_message, dict) and 'content' in assistant_message:
-                            content = assistant_message['content']
-                            
-                        if content:
-                            self.emit_assistant_message(content)
-                        
-                        # Create a proper assistant message for the conversation history
-                        message_dict = {"role": "assistant"}
-                        if content:
-                            message_dict["content"] = content
-                        
-                        # Add tool calls if present
-                        if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
-                            message_dict["tool_calls"] = [
-                                {
-                                    "id": tool_call.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_call.function.name,
-                                        "arguments": tool_call.function.arguments
-                                    }
-                                } for tool_call in assistant_message.tool_calls
-                            ]
-                        
-                        # Add the complete assistant message to the conversation
-                        self.conversation_manager.conversation_history.append(message_dict)
-                        
-                        # Reset step changes
-                        step_changes = []
-                        
-                        # Handle any tool calls
-                        if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
-                            for tool_call in assistant_message.tool_calls:
-                                function_name = tool_call.function.name
-                                function_args = json.loads(tool_call.function.arguments)
-                                
-                                # Execute the function
-                                function_response, change = self.execution_manager.execute_function(
-                                    function_name, function_args
-                                )
-                                
-                                # Emit tool call execution
-                                self.emit_tool_call(function_name, function_args, str(function_response))
-                                
-                                # Scan for new files after tool execution
-                                self._scan_for_new_files()
-                                
-                                # Track changes if any were made
-                                if change:
-                                    changes_made.append(change)
-                                    step_changes.append(change)
-                                
-                                # Add the function call and response to the conversation
-                                self.conversation_manager.add_message(
-                                    "tool", 
-                                    str(function_response), 
-                                    tool_call_id=tool_call.id,
-                                    name=function_name
-                                )
-                        
-                        # Generate a summary of changes for this step if any were made
-                        if step_changes:
-                            step_summary = self.summarizer.summarize_changes(step_changes, is_step_summary=True)
-                            if step_summary:
-                                self.emit_step_summary(step_summary)
-                        
-                        # Check if the agent is done or needs to continue
-                        should_continue = True
-                        needs_more_steps = False
-                        
-                        if content:
-                            content_lower = content.lower()
-                            
-                            # Check for completion phrases
-                            if any(phrase in content_lower for phrase in [
-                                "task complete",
-                                "i've completed",
-                                "all done",
-                                "finished",
-                                "completed successfully"
-                            ]):
-                                self.emit_message('task_completed', {
-                                    'message': 'Task completed successfully',
-                                    'timestamp': datetime.now().isoformat()
-                                })
-                                break
-                                
-                            # Check if the assistant is just waiting for input
-                            elif not hasattr(assistant_message, 'tool_calls') and any(phrase in content_lower for phrase in [
-                                "do you need",
-                                "would you like",
-                                "let me know",
-                                "please specify",
-                                "can you clarify",
-                                "if you need"
-                            ]):
-                                # Only set should_continue to False in manual mode
-                                if auto_steps_remaining == 0:  # Only in manual mode
-                                    should_continue = False
-                                    
-                            # Check if more steps are needed
-                            elif any(phrase in content_lower for phrase in [
-                                "need more steps",
-                                "additional steps required",
-                                "more steps needed",
-                                "cannot complete within current steps"
-                            ]):
-                                needs_more_steps = True
-                        
-                        # Handle continuation logic
-                        if step < max_steps and should_continue and not self.stop_requested and not self.execution_manager.stop_requested:
-                            # Handle auto-continue
-                            if auto_steps_remaining == -1 or auto_steps_remaining > 0:
-                                if auto_steps_remaining > 0:
-                                    auto_steps_remaining -= 1
-                                
-                                # Check if the model is asking a question in auto mode
-                                if not hasattr(assistant_message, 'tool_calls') and content and any(phrase in content_lower for phrase in [
-                                    "do you need", "would you like", "let me know", "please specify", 
-                                    "can you clarify", "if you need", "what would you like", "your preference",
-                                    "should i", "do you want"
-                                ]):
-                                    # Add an automatic 'y' response in auto-mode
-                                    self.conversation_manager.add_message("user", "y")
-                                    self.emit_message('auto_continue', {
-                                        'message': 'Auto-continuing with "y" response',
-                                        'timestamp': datetime.now().isoformat()
-                                    })
-                                
-                                if needs_more_steps:
-                                    self.emit_message('warning', {
-                                        'message': 'Task requires more steps than currently allocated',
-                                        'timestamp': datetime.now().isoformat()
-                                    })
-                                
-                                continue
-                            
-                            # Manual mode - request user input
-                            if not should_continue:
-                                self.emit_message('step_completed', {
-                                    'message': 'No further actions needed',
-                                    'timestamp': datetime.now().isoformat()
-                                })
-                                break
-                            else:
-                                user_input = self.get_user_input("Enter your next instruction, 'y' to continue with current task, or 'n' to stop")
-                                
-                                # Normalize the input
-                                normalized_input = user_input.strip().lower()
-                                
-                                if normalized_input == 'n':
-                                    self.emit_message('user_stopped', {
-                                        'message': 'User requested to stop',
-                                        'timestamp': datetime.now().isoformat()
-                                    })
-                                    break
-                                elif normalized_input == 'y':
-                                    # Simply continue
-                                    continue
-                                else:
-                                    # Add the custom message to the conversation
-                                    self.conversation_manager.add_message("user", user_input)
-                                    self.emit_message('user_input_received', {
-                                        'input': user_input,
-                                        'timestamp': datetime.now().isoformat()
-                                    })
-                        else:
-                            # If we're at max steps or have nothing more to do, break
-                            if not should_continue:
-                                self.emit_message('step_completed', {
-                                    'message': 'No further actions needed',
-                                    'timestamp': datetime.now().isoformat()
-                                })
-                            elif needs_more_steps:
-                                self.emit_message('warning', {
-                                    'message': 'Reached maximum steps but task requires more steps',
-                                    'timestamp': datetime.now().isoformat()
-                                })
-                            break
-                    
-                    except Exception as e:
-                        self.emit_message('step_error', {
-                            'error': str(e),
-                            'step': step,
+                    # Detect task completion
+                    elif "✅ Task completed" in text:
+                        self.emit_message('task_completed', {
+                            'message': 'Task completed successfully',
                             'timestamp': datetime.now().isoformat()
                         })
-                        break
+                        
+                    # Detect directory changes
+                    elif "🔄 Changed working directory to:" in text:
+                        self.emit_message('directory_changed', {
+                            'directory': text.split("🔄 Changed working directory to: ")[-1],
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        
+                    # Detect auto-continue messages
+                    elif "🔄 Auto-continuing" in text:
+                        self.emit_message('auto_continue', {
+                            'message': 'Auto-continuing execution',
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        
+                    # Detect warnings
+                    elif "⚠️" in text:
+                        self.emit_message('warning', {
+                            'message': text,
+                            'timestamp': datetime.now().isoformat()
+                        })
+            
+            # Patch built-in functions
+            builtins.input = websocket_input
+            builtins.print = websocket_print
+            
+            try:
+                # Call the core run manager's run method
+                # This will handle all the prompting, conversation management, etc.
+                self.run_manager.run(user_instruction, max_steps, auto_continue)
                 
-                except Exception as e:
-                    self.emit_message('execution_error', {
-                        'error': str(e),
-                        'step': step,
+                # Check if we were stopped externally
+                if self.stop_requested:
+                    self.emit_message('agent_stopped', {
+                        'message': 'Agent was stopped by user or external request',
                         'timestamp': datetime.now().isoformat()
                     })
-                    break
-            
-            # Generate a final summary of all changes
-            if changes_made:
-                final_summary = self.summarizer.summarize_changes(changes_made)
-                self.emit_message('final_summary', {
-                    'summary': final_summary,
-                    'timestamp': datetime.now().isoformat()
-                })
-            
-            # Save the memory
-            self.memory_manager.add_conversation(self.conversation_manager.get_history())
-            self.memory_manager.save_memory()
-            
-            # Emit agent_stopped if stopped by user or external request
-            if self.stop_requested or self.execution_manager.stop_requested:
-                self.emit_message('agent_stopped', {
-                    'message': 'Agent was stopped by user or external request',
-                    'timestamp': datetime.now().isoformat()
-                })
-            else:
-                self.emit_message('agent_finished', {
-                    'message': 'Agent execution completed',
-                    'timestamp': datetime.now().isoformat()
-                })
-            
-        finally:
-            # Always restore the original working directory
-            if os.getcwd() != original_cwd:
-                os.chdir(original_cwd) 
+                else:
+                    self.emit_message('agent_finished', {
+                        'message': 'Agent execution completed',
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+            finally:
+                # Restore original functions
+                builtins.input = original_input
+                builtins.print = original_print
+                
+        except Exception as e:
+            self.emit_message('execution_error', {
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            })
+            raise
 
     def _scan_initial_files(self):
         """Scan the output directory for initial files"""
