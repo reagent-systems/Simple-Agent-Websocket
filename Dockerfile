@@ -14,7 +14,7 @@ COPY . .
 
 # Initialize git submodules and create symlink
 RUN git config --global --add safe.directory /app && \
-    git submodule update --init --recursive && \
+    git submodule update --init --recursive --remote && \
     ln -sf SimpleAgent-Core/SimpleAgent SimpleAgent && \
     echo "✅ Submodules initialized successfully" && \
     ls -la SimpleAgent/ && \
