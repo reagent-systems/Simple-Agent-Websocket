@@ -51,16 +51,16 @@ class CoreLoader:
             # Import core modules
             import commands
             from commands import REGISTERED_COMMANDS, COMMAND_SCHEMAS
-            from core.agent import SimpleAgent
-            from core.config import (
+            from core.agent.agent import SimpleAgent
+            from core.utils.config import (
                 OPENAI_API_KEY, MAX_STEPS, API_PROVIDER, 
                 API_BASE_URL, GEMINI_API_KEY, create_client, DEFAULT_MODEL
             )
-            from core.version import AGENT_VERSION
-            from core.run_manager import RunManager
-            from core.conversation import ConversationManager
-            from core.execution import ExecutionManager
-            from core.memory import MemoryManager
+            from core.utils.version import AGENT_VERSION
+            from core.agent.run_manager import RunManager
+            from core.conversation.conversation import ConversationManager
+            from core.execution.execution import ExecutionManager
+            from core.conversation.memory import MemoryManager
             
             # Cache the modules
             self._core_modules = {
